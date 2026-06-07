@@ -1,0 +1,8 @@
+[package]
+name = "dial-theory-rs"
+version = "0.1.0"
+edition = "2021"
+description = "Cultural dial positions for agent personality — theoretical spectrums, traditions, clustering, and evolution"
+license = "MIT"
+
+[dependencies]
