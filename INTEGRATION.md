@@ -1,302 +1,251 @@
-# INTEGRATION.md — dial-theory-rs × wasserstein-agents-rs × sheaf-coherence-rs
+# Integration Guide: dial-theory-rs
 
-**Measuring disagreement**: dial-theory positions agents on cultural spectrums, wasserstein-agents measures the distributional distance between agent populations, and sheaf-coherence checks if local agreement assembles into global consensus.
+## What This Crate Provides
 
-## Synergy Map
+Cultural dial positions for agent personality — where agents fall on theoretical spectrums. Models cultural traditions as points on 2D dials with distance metrics, clustering, and evolution over time.
 
+- **`position::DialPosition`** — 2D coordinate on a cultural dial `[-1, 1] × [-1, 1]`. Methods: `new()`, `center()`, `normalized()`, `distance_to()`, `midpoint()`, `weighted_avg()`, `angle()`, `magnitude()`, `move_toward()`, `is_valid()`.
+- **`tradition::Tradition`** — Cultural tradition with `name`, `position`, `strength` (0–1), and `description`. Methods: `new()`, `with_strength()`, `describe()`, `distance_to()`, `is_similar()`, `blend()`.
+- **`tradition::TraditionSet`** — Collection of traditions forming a cultural landscape. Methods: `new()`, `add()`, `remove()`, `find_by_name()`, `closest_to()`, `diversity()`.
+- **`distance::DistanceMetric`** — Enum: `Euclidean`, `Manhattan`, `Chebyshev`, `Angular`, `Cosine`.
+- **`distance::distance()`** — Compute distance between two positions using any metric.
+- **`distance::tradition_distance()`** — Distance between two traditions.
+- **`distance::distance_matrix()`** — Full pairwise distance matrix for a set of positions.
+- **`distance::closest_pair()`** — Find the two closest positions and their distance.
+- **`clustering::Cluster`** — A cluster with `centroid` and `members` indices. Methods: `new()`, `size()`, `recompute_centroid()`.
+- **`clustering::ClusteringResult`** — Result with `clusters`, `iterations`, `converged`.
+- **`clustering::kmeans()`** — K-means clustering on traditions using any distance metric.
+- **`evolution::evolve_tradition()`** — Evolve a tradition's position over time with drift and attraction.
+- **`evolution::evolve_population()`** — Evolve an entire tradition set through generations.
+
+## How to Add This Crate
+
+```bash
+cargo add dial-theory
 ```
-dial-theory-rs            wasserstein-agents-rs       sheaf-coherence-rs
-┌──────────────────┐     ┌─────────────────────┐     ┌─────────────────────┐
-│ DialPosition     │     │ AgentDistribution    │     │ Sheaf               │
-│ Tradition        │────►│ SinkhornSolver       │────►│ RestrictionMap      │
-│ DistanceMetric   │     │ OptimalTransport     │     │ Assignment          │
-│  Euclidean       │     │ JKOScheme            │     │ coherence_energy()  │
-│  Angular         │     │ barycenter_sinkhorn  │     │ normalized_energy() │
-│  Cosine          │     │ sliced_wasserstein_* │     │ synchronization     │
-│ Clustering       │     │ dist_w2              │     │ sheaf_laplacian     │
-│ Evolution        │     │ AgentDistribution    │     │ Laplacian           │
-└──────────────────┘     └─────────────────────┘     └─────────────────────┘
-         │                        │                          │
-         └────────────────────────┼──────────────────────────┘
-                                  ▼
-                    Measure how agents disagree:
-                    positions → transport → coherence
-```
-
-## Key Insight
-
-Three levels of disagreement measurement:
-1. **dial-theory**: point-level — where does *this* agent sit on *this* spectrum?
-2. **wasserstein-agents**: distribution-level — how far apart are two *populations* of agents?
-3. **sheaf-coherence**: structural-level — does local agreement add up to global consensus?
-
-Use all three to get a complete picture of multi-agent disagreement.
-
-## Example 1: Multi-Scale Agent Disagreement
 
 ```rust
-use dial_theory_rs::position::DialPosition;
-use dial_theory_rs::distance::{distance, DistanceMetric};
-use wasserstein_agents_rs::transport::{SinkhornSolver, OptimalTransport};
-use wasserstein_agents_rs::sliced::sliced_wasserstein_1;
-use sheaf_coherence_rs::sheaf::{Cell, RestrictionMap, Assignment, Sheaf};
-use sheaf_coherence_rs::coherence::{coherence_energy, normalized_coherence_energy};
+use dial_theory::{
+    DialPosition, Tradition, TraditionSet,
+    DistanceMetric, distance_matrix, kmeans,
+};
+```
 
-/// Measure disagreement at all three scales for a group of agents.
-fn measure_disagreement(
-    positions: &[DialPosition],
-    group_a_weights: &[f64],
-    group_b_weights: &[f64],
+## Cross-Repo Connections
+
+### With `conservation-law-rs`: Cultural Energy Conservation
+
+Treat cultural distance from center as potential energy, conserved during tradition blending:
+
+```rust
+use dial_theory::{DialPosition, Tradition};
+use conservation_law::lagrangian::AgentState;
+
+fn blend_conserving_energy(a: &Tradition, b: &Tradition) -> Tradition {
+    let energy_before = a.position.magnitude().powi(2) + b.position.magnitude().powi(2);
+    let blended_pos = a.blend(b);
+    let energy_after = blended_pos.magnitude().powi(2) * 2.0;
+    
+    // Scale to conserve cultural energy
+    let scale = (energy_before / energy_after).sqrt();
+    let conserved_pos = DialPosition::new(
+        blended_pos.x * scale,
+        blended_pos.y * scale,
+    ).normalized();
+    
+    Tradition::new("blended", conserved_pos)
+        .with_strength((a.strength + b.strength) / 2.0)
+}
+```
+
+### With `si-cli`: Interactive Tradition Browser
+
+Browse and compare agent cultural positions via the CLI:
+
+```rust
+use dial_theory::{TraditionSet, Tradition, DialPosition, DistanceMetric};
+
+fn cli_tradition_distance(set: &TraditionSet, name_a: &str, name_b: &str) {
+    let a = set.find_by_name(name_a).unwrap();
+    let b = set.find_by_name(name_b).unwrap();
+    
+    for metric in [DistanceMetric::Euclidean, DistanceMetric::Cosine, DistanceMetric::Angular] {
+        let d = dial_theory::tradition_distance(a, b, &metric);
+        println!("{:?}: {:.4}", metric, d);
+    }
+}
+
+fn cli_cluster_traditions(set: &TraditionSet, k: usize) {
+    let result = kmeans(&set.traditions, k, 100, &DistanceMetric::Euclidean);
+    println!("Converged: {} in {} iterations", result.converged, result.iterations);
+    for (i, cluster) in result.clusters.iter().enumerate() {
+        println!("Cluster {}: {} members at ({:.2}, {:.2})",
+            i, cluster.size(), cluster.centroid.x, cluster.centroid.y);
+    }
+}
+```
+
+### With `si-fleet-api`: REST Cultural Analysis
+
+Expose tradition clustering and distance analysis via REST:
+
+```rust
+use dial_theory::{TraditionSet, Tradition, DialPosition, kmeans, DistanceMetric};
+use si_fleet_api::{HttpRequest, HttpResponse};
+
+fn get_tradition_clusters(req: HttpRequest) -> HttpResponse {
+    let body: serde_json::Value = req.json().unwrap();
+    let traditions: Vec<Tradition> = serde_json::from_value(body["traditions"].clone()).unwrap();
+    let k = body["k"].as_u64().unwrap() as usize;
+    
+    let result = kmeans(&traditions, k, 100, &DistanceMetric::Euclidean);
+    
+    HttpResponse::json(json!({
+        "converged": result.converged,
+        "iterations": result.iterations,
+        "clusters": result.clusters.iter().map(|c| json!({
+            "centroid": { "x": c.centroid.x, "y": c.centroid.y },
+            "size": c.size(),
+            "members": c.members,
+        })).collect::<Vec<_>>(),
+    }))
+}
+
+fn post_tradition_blend(req: HttpRequest) -> HttpResponse {
+    let body: serde_json::Value = req.json().unwrap();
+    let a: Tradition = serde_json::from_value(body["a"].clone()).unwrap();
+    let b: Tradition = serde_json::from_value(body["b"].clone()).unwrap();
+    let blended = a.blend(&b);
+    
+    HttpResponse::json(json!({
+        "x": blended.x,
+        "y": blended.y,
+        "distance_from_a": a.position.distance_to(&blended),
+        "distance_from_b": b.position.distance_to(&blended),
+    }))
+}
+```
+
+### With Supabase: Persistent Cultural Landscapes
+
+Store agent cultural positions and track evolution over time in Supabase:
+
+```rust
+use dial_theory::{Tradition, DialPosition};
+use supabase_rs::SupabaseClient;
+
+async fn persist_tradition(
+    client: &SupabaseClient,
+    agent_id: &str,
+    tradition: &Tradition,
 ) {
-    // === Level 1: Pairwise dial distances ===
-    println!("=== Level 1: Pairwise Disagreement ===");
-    for i in 0..positions.len() {
-        for j in (i + 1)..positions.len() {
-            let euclidean = distance(&positions[i], &positions[j], &DistanceMetric::Euclidean);
-            let angular = distance(&positions[i], &positions[j], &DistanceMetric::Angular);
-            let cosine = distance(&positions[i], &positions[j], &DistanceMetric::Cosine);
-            println!("  Agent {} vs {}: euclidean={:.3} angular={:.3} cosine={:.3}",
-                i, j, euclidean, angular, cosine);
-        }
+    client.from("agent_traditions")
+        .insert(json!({
+            "agent_id": agent_id,
+            "tradition_name": tradition.name,
+            "position_x": tradition.position.x,
+            "position_y": tradition.position.y,
+            "strength": tradition.strength,
+            "description": tradition.description,
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+        }))
+        .execute()
+        .await
+        .unwrap();
+}
+
+async fn get_tradition_timeline(
+    client: &SupabaseClient,
+    agent_id: &str,
+    tradition_name: &str,
+) -> Vec<(DialPosition, f64, String)> {
+    let rows = client.from("agent_traditions")
+        .select("*")
+        .eq("agent_id", agent_id)
+        .eq("tradition_name", tradition_name)
+        .order("timestamp.asc")
+        .execute()
+        .await
+        .unwrap();
+    
+    rows.into_iter()
+        .map(|r| (
+            DialPosition::new(
+                r.get("position_x").unwrap().parse().unwrap(),
+                r.get("position_y").unwrap().parse().unwrap(),
+            ),
+            r.get("strength").unwrap().parse().unwrap(),
+            r.get("timestamp").unwrap().to_string(),
+        ))
+        .collect()
+}
+
+async fn get_fleet_cultural_centroid(client: &SupabaseClient) -> DialPosition {
+    let rows = client.from("agent_traditions")
+        .select("position_x,position_y")
+        .execute()
+        .await
+        .unwrap();
+    
+    let n = rows.len() as f64;
+    let x: f64 = rows.iter().map(|r| r.get("position_x").unwrap().parse::<f64>().unwrap()).sum();
+    let y: f64 = rows.iter().map(|r| r.get("position_y").unwrap().parse::<f64>().unwrap()).sum();
+    
+    DialPosition::new(x / n, y / n)
+}
+```
+
+## Design Patterns
+
+### Pattern: Cultural Drift Tracking
+
+Monitor how an agent's dial position drifts over time and alert on rapid change:
+
+```rust
+use dial_theory::{DialPosition, Tradition};
+
+fn cultural_drift_alert(history: &[DialPosition], threshold: f64) -> bool {
+    if history.len() < 2 {
+        return false;
     }
+    let drift = history.last().unwrap().distance_to(&history[0]);
+    drift > threshold
+}
+```
 
-    // === Level 2: Distributional distance (Wasserstein) ===
-    println!("\n=== Level 2: Population Distance ===");
-    let x: Vec<f64> = positions.iter().map(|p| p.x).collect();
-    let y: Vec<f64> = positions.iter().map(|p| p.y).collect();
+### Pattern: Consensus-Based Blending
 
-    let sw1 = sliced_wasserstein_1(&x, &y, 100);
-    println!("  Sliced Wasserstein-1 (x-coords): {:.4}", sw1);
+Blend multiple traditions by weighted democratic consensus:
 
-    // Build cost matrix for Sinkhorn
-    let n = group_a_weights.len();
-    let m = group_b_weights.len();
-    let cost: Vec<Vec<f64>> = (0..n)
-        .map(|i| (0..m)
-            .map(|j| {
-                let dx = if i < positions.len() && j < positions.len() {
-                    positions[i].x - positions[j].x
-                } else { 0.0 };
-                dx.abs()
-            })
-            .collect())
+```rust
+use dial_theory::{Tradition, DialPosition};
+
+fn consensus_blend(traditions: &[Tradition]) -> DialPosition {
+    let total_strength: f64 = traditions.iter().map(|t| t.strength).sum();
+    let x: f64 = traditions.iter().map(|t| t.position.x * t.strength).sum::<f64>() / total_strength;
+    let y: f64 = traditions.iter().map(|t| t.position.y * t.strength).sum::<f64>() / total_strength;
+    DialPosition::new(x, y).normalized()
+}
+```
+
+### Pattern: Affinity-Based Clustering
+
+Use spectral clustering on tradition distance matrices to find natural cultural groupings:
+
+```rust
+use dial_theory::{TraditionSet, DistanceMetric, distance_matrix};
+
+fn tradition_affinity_clusters(set: &TraditionSet, k: usize) -> Vec<Vec<usize>> {
+    let positions: Vec<_> = set.traditions.iter().map(|t| t.position.clone()).collect();
+    let dist = distance_matrix(&positions, &DistanceMetric::Cosine);
+    
+    // Convert distance to affinity
+    let affinity: Vec<Vec<f64>> = dist.iter()
+        .map(|row| row.iter().map(|&d| (-d * d).exp()).collect())
         .collect();
-
-    let solver = SinkhornSolver::new(0.1);
-    let transport_plan = solver.solve(&cost, group_a_weights, group_b_weights);
-    let total_mass: f64 = transport_plan.iter().flat_map(|r| r.iter()).sum();
-    println!("  Transport plan total mass: {:.4}", total_mass);
-
-    // === Level 3: Structural coherence ===
-    println!("\n=== Level 3: Structural Coherence ===");
-    let mut sheaf = Sheaf::new();
-    for (i, pos) in positions.iter().enumerate() {
-        sheaf.add_cell(Cell::new(i, 0));
-        sheaf.assign(i, Assignment::new(vec![pos.x, pos.y]));
-    }
-
-    // Restriction maps: identity (simplified agreement)
-    for i in 0..positions.len().saturating_sub(1) {
-        sheaf.add_restriction_map(RestrictionMap::new(
-            i, i + 1,
-            vec![vec![1.0, 0.0], vec![0.0, 1.0]],
-        ));
-    }
-
-    let energy = coherence_energy(&sheaf);
-    let normalized = normalized_coherence_energy(&sheaf);
-    println!("  Coherence energy: {:.4} (lower = more coherent)", energy);
-    println!("  Normalized:       {:.4}", normalized);
-    println!("  Global consensus: {:.0}%", (1.0 - normalized.min(1.0)) * 100.0);
-}
-
-fn main() {
-    let positions = vec![
-        DialPosition::new(0.8, 0.2),   // Agent 0: tech-leaning
-        DialPosition::new(-0.5, 0.7),   // Agent 1: humanities-leaning
-        DialPosition::new(0.3, -0.4),   // Agent 2: moderate, skeptical
-        DialPosition::new(0.9, 0.9),    // Agent 3: strongly positive
-        DialPosition::new(-0.8, -0.6),  // Agent 4: contrarian
-    ];
-
-    let group_a = vec![0.3, 0.2, 0.1, 0.25, 0.15]; // normalized weights
-    let group_b = vec![0.1, 0.3, 0.2, 0.15, 0.25]; // different emphasis
-
-    measure_disagreement(&positions, &group_a, &group_b);
+    
+    // Run spectral clustering (pseudo-code)
+    // spectral_clustering(&affinity, k, ...)
+    vec![]
 }
 ```
-
-## Example 2: Wasserstein Barycenter of Agent Traditions
-
-Find the "center of mass" of multiple agent traditions using optimal transport:
-
-```rust
-use dial_theory_rs::position::DialPosition;
-use dial_theory_rs::tradition::Tradition;
-use dial_theory_rs::distance::{distance, DistanceMetric};
-use wasserstein_agents_rs::barycenter::{barycenter_1d_quantile, dist_w2};
-use wasserstein_agents_rs::sliced::sliced_wasserstein_2;
-
-/// Compute the Wasserstein barycenter of agent positions.
-fn tradition_barycenter(positions: &[DialPosition]) -> DialPosition {
-    let xs: Vec<f64> = positions.iter().map(|p| p.x).collect();
-    let ys: Vec<f64> = positions.iter().map(|p| p.y).collect();
-
-    // Simple barycenter: mean position
-    let mean_x: f64 = xs.iter().sum::<f64>() / xs.len() as f64;
-    let mean_y: f64 = ys.iter().sum::<f64>() / ys.len() as f64;
-
-    println!("Barycenter position: ({:.3}, {:.3})", mean_x, mean_y);
-
-    // Measure spread using sliced Wasserstein distance
-    let sw = sliced_wasserstein_2(&xs, &ys, 50);
-    println!("Cross-axis disagreement (SW2): {:.4}", sw);
-
-    DialPosition::new(mean_x, mean_y)
-}
-
-/// Measure pairwise Wasserstein distances between traditions.
-fn tradition_distance_matrix(traditions: &[DialPosition]) {
-    println!("\n=== Tradition Distance Matrix ===");
-    let n = traditions.len();
-    for i in 0..n {
-        for j in (i + 1)..n {
-            let d = distance(&traditions[i], &traditions[j], &DistanceMetric::Euclidean);
-            println!("  T{} ↔ T{}: {:.4}", i, j, d);
-        }
-    }
-}
-
-fn main() {
-    let traditions = vec![
-        DialPosition::new(0.8, 0.2),   // Analytical
-        DialPosition::new(-0.6, 0.7),   // Continental
-        DialPosition::new(0.0, 0.0),    // Pragmatist
-        DialPosition::new(0.5, -0.3),   // Empirical
-    ];
-
-    let center = tradition_barycenter(&traditions);
-    tradition_distance_matrix(&traditions);
-
-    println!("\nFleet center: ({:.2}, {:.2})", center.x, center.y);
-    for (i, t) in traditions.iter().enumerate() {
-        let d = distance(t, &center, &DistanceMetric::Euclidean);
-        println!("  T{} distance from center: {:.3}", i, d);
-    }
-}
-```
-
-## Example 3: Sheaf Laplacian for Agent Consensus Detection
-
-Use the sheaf Laplacian to detect which agents are blocking consensus:
-
-```rust
-use sheaf_coherence_rs::sheaf::{Cell, RestrictionMap, Assignment, Sheaf};
-use sheaf_coherence_rs::coherence::{coherence_energy, normalized_coherence_energy, map_disagreement};
-use sheaf_coherence_rs::laplacian::SheafLaplacian;
-use dial_theory_rs::position::DialPosition;
-use dial_theory_rs::distance::{distance, DistanceMetric};
-
-/// Build a sheaf from agent positions and detect consensus blockers.
-fn detect_consensus_blockers() {
-    let agents = vec![
-        DialPosition::new(0.8, 0.2),
-        DialPosition::new(0.7, 0.3),
-        DialPosition::new(0.6, 0.4),
-        DialPosition::new(-0.9, -0.8),  // outlier / blocker
-        DialPosition::new(0.5, 0.5),
-    ];
-
-    // Build sheaf: each agent is a cell, edges between close agents
-    let mut sheaf = Sheaf::new();
-    for (i, pos) in agents.iter().enumerate() {
-        sheaf.add_cell(Cell::new(i, 0));
-        sheaf.assign(i, Assignment::new(vec![pos.x, pos.y]));
-    }
-
-    // Add restriction maps for nearby agents (distance < 0.5)
-    for i in 0..agents.len() {
-        for j in (i + 1)..agents.len() {
-            let d = distance(&agents[i], &agents[j], &DistanceMetric::Euclidean);
-            if d < 0.8 {
-                // Identity restriction map (agents agree on this overlap)
-                sheaf.add_restriction_map(RestrictionMap::new(
-                    i, j,
-                    vec![vec![1.0, 0.0], vec![0.0, 1.0]],
-                ));
-            }
-        }
-    }
-
-    // Compute coherence
-    let energy = coherence_energy(&sheaf);
-    let normalized = normalized_coherence_energy(&sheaf);
-    println!("Fleet coherence: {:.4} (normalized: {:.4})", energy, normalized);
-
-    // Identify blocker: agent 3 has high disagreement with others
-    let blocker = &agents[3];
-    for (i, agent) in agents.iter().enumerate() {
-        if i == 3 { continue; }
-        let d = distance(blocker, agent, &DistanceMetric::Euclidean);
-        println!("  Blocker ↔ Agent {}: {:.3} {}", i, d,
-            if d > 1.0 { "⚠ DISAGREE" } else { "✓" });
-    }
-
-    // Without the blocker
-    let mut sheaf_clean = Sheaf::new();
-    for (i, pos) in agents.iter().enumerate() {
-        if i == 3 { continue; }
-        let new_i = if i > 3 { i - 1 } else { i };
-        sheaf_clean.add_cell(Cell::new(new_i, 0));
-        sheaf_clean.assign(new_i, Assignment::new(vec![pos.x, pos.y]));
-    }
-    for i in 0..4 {
-        for j in (i + 1)..4 {
-            sheaf_clean.add_restriction_map(RestrictionMap::new(
-                i, j,
-                vec![vec![1.0, 0.0], vec![0.0, 1.0]],
-            ));
-        }
-    }
-    let clean_energy = coherence_energy(&sheaf_clean);
-    println!("\nWith blocker:    energy = {:.4}", energy);
-    println!("Without blocker: energy = {:.4}", clean_energy);
-    println!("Improvement:     {:.1}%", (energy - clean_energy) / energy * 100.0);
-}
-
-fn main() {
-    detect_consensus_blockers();
-}
-```
-
-## Data Flow
-
-```
-Agent positions (dial-theory)
-         │
-    ┌────┼────┐
-    ▼    ▼    ▼
-Euclidean Angular Cosine
-distance distance distance
-    │    │    │      ← Level 1: pairwise
-    └────┼────┘
-         ▼
-AgentDistribution (wasserstein-agents)
-    ├─ SinkhornSolver.solve() → transport plan
-    ├─ sliced_wasserstein_1/2 → distribution distance
-    └─ barycenter → population center
-         │                       ← Level 2: distributional
-         ▼
-Cell + RestrictionMap (sheaf-coherence)
-    ├─ coherence_energy() → global disagreement
-    ├─ map_disagreement() → per-edge disagreement
-    └─ sheaf_laplacian → structural holes
-                            ← Level 3: structural
-```
-
-## When to Use This Combination
-
-- **Multi-agent governance**: measure and predict disagreement in agent populations
-- **Fleet coordination**: identify blocker agents that prevent consensus
-- **Cultural analysis**: position agents on theoretical spectrums and measure population-level distance
-- **Consensus detection**: use all three levels to determine if agreement is possible
